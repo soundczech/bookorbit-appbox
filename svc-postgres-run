@@ -1,0 +1,27 @@
+#!/bin/bash
+# s6 service: embedded PostgreSQL as UID 1000. entrypoint.sh creates the data dir.
+
+PG_BIN="${PG_BIN:-/usr/libexec/postgresql18}"
+PGDATA="${PGDATA:-/database/pgdata}"
+
+mkdir -p /run/postgresql
+chown 1000:1000 /run/postgresql
+
+# Clear a stale postmaster.pid left by an unclean shutdown.
+if [[ -f "${PGDATA}/postmaster.pid" ]]; then
+    OLD_PID="$(head -1 "${PGDATA}/postmaster.pid")"
+    if ! kill -0 "${OLD_PID}" 2>/dev/null; then
+        pkill -9 -u 1000 postgres 2>/dev/null || true
+        sleep 1
+        rm -f "${PGDATA}/postmaster.pid"
+    fi
+fi
+
+# Postgres requires 0700.
+chmod 700 "${PGDATA}"
+
+# Loopback only.
+exec gosu 1000:1000 "${PG_BIN}/postgres" -D "${PGDATA}" \
+    -c listen_addresses=127.0.0.1 \
+    -c port=5432 \
+    -c unix_socket_directories=/run/postgresql

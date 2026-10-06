@@ -1,0 +1,61 @@
+#!/bin/bash
+# s6 service: BookOrbit as UID 1000. Starts after svc-postgres.
+
+PG_BIN="${PG_BIN:-/usr/libexec/postgresql18}"
+SECRETS_FILE="/data/.appbox-secrets.env"
+
+# Secrets written by entrypoint.sh
+set -a
+# shellcheck disable=SC1090
+. "${SECRETS_FILE}"
+set +a
+
+# Appbox sets VIRTUAL_HOST and handles SSL in front. Set APP_URL to override.
+if [[ -z "${APP_URL:-}" ]]; then
+    if [[ -n "${VIRTUAL_HOST:-}" ]]; then
+        APP_URL="https://${VIRTUAL_HOST%%,*}"
+    else
+        APP_URL="http://localhost:${PORT:-3000}"
+    fi
+fi
+export APP_URL
+export CLIENT_URL="${CLIENT_URL:-${APP_URL}}"
+
+# Node heap in MB: half the container limit. BookOrbit's own "auto" uses 75%,
+# which starves the Postgres sharing this container. Override with NODE_MAX_OLD_SPACE_SIZE.
+auto_heap_mb() {
+    local f v limit=""
+    for f in "$@"; do
+        [[ -r "${f}" ]] || continue
+        v="$(cat "${f}" 2>/dev/null)"
+        # "max" (cgroup v2) or a huge number (cgroup v1) means no limit
+        if [[ "${v}" =~ ^[0-9]+$ && "${#v}" -le 15 ]]; then
+            limit="${v}"
+            break
+        fi
+    done
+    local heap=1024
+    if [[ -n "${limit}" ]]; then
+        heap=$((limit / 1048576 / 2))
+    fi
+    if [[ "${heap}" -lt 256 ]]; then heap=256; fi
+    if [[ "${heap}" -gt 4096 ]]; then heap=4096; fi
+    echo "${heap}"
+}
+if [[ -z "${NODE_MAX_OLD_SPACE_SIZE:-}" || "${NODE_MAX_OLD_SPACE_SIZE}" == "auto" ]]; then
+    NODE_MAX_OLD_SPACE_SIZE="$(auto_heap_mb /sys/fs/cgroup/memory.max /sys/fs/cgroup/memory/memory.limit_in_bytes)"
+fi
+export NODE_MAX_OLD_SPACE_SIZE
+
+# Wait for Postgres and create the database if missing.
+until "${PG_BIN}/pg_isready" -q -h /run/postgresql -U "${POSTGRES_USER}" -d postgres; do
+    sleep 1
+done
+if ! gosu 1000:1000 "${PG_BIN}/psql" -h /run/postgresql -U "${POSTGRES_USER}" -d postgres -tAc \
+        "SELECT 1 FROM pg_database WHERE datname = '${POSTGRES_DB}'" | grep -q 1; then
+    gosu 1000:1000 "${PG_BIN}/createdb" -h /run/postgresql -U "${POSTGRES_USER}" "${POSTGRES_DB}" || exit 1
+fi
+
+# BookOrbit's own entrypoint checks /data, runs migrations and starts the server.
+cd /app || exit 1
+exec gosu 1000:1000 sh /app/entrypoint.sh

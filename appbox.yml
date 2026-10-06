@@ -1,0 +1,157 @@
+app:
+  display_name: "BookOrbit"
+  publisher: "BookOrbit"
+  description: |
+    BookOrbit is a self-hosted digital library and reading platform for ebooks, PDFs, audiobooks, and comics.
+
+    - Built-in web readers for EPUB, MOBI, AZW3, PDF, CBZ/CBR, and audiobooks (M4B, MP3)
+    - Progress and annotation sync between Kobo devices, KOReader, and the web reader
+    - Metadata from Google Books, Amazon, Goodreads, Open Library, Audible, ComicVine, and more
+    - Multiple libraries, collections, and rule-based Smart Scopes
+    - OPDS catalog, Send-to-Kindle, and drag-and-drop uploads
+    - Reading statistics, goals, and achievements
+    - Multiple users with per-user permissions and optional OIDC single sign-on
+
+    Your Appbox files are available inside the app under `/APPBOX_DATA`, so a library can point straight at books you already store on your Appbox.
+  short_description: "Self-hosted library and reader for ebooks, audiobooks, PDFs, and comics"
+  icon: icon.png
+  categories:
+    - "Media"
+  devsite: "https://bookorbit.app"
+  source_repo: "https://github.com/bookorbit/bookorbit"
+
+image:
+  name: "bookorbit"
+  version: "3.2.0"
+  tag: "3.2.0"
+
+container:
+  cmd: null
+  user: null
+  group_add: null
+  # Node and Postgres share this memory. The Node heap is set to half the limit at startup, so App Boost scales it.
+  memory: 2
+  memory_swap: 0
+  memory_reservation: 0
+  cpus: 0
+  # s6-overlay needs to be PID 1.
+  init: false
+  cap_add: null
+  cap_drop: null
+  shm_size: null
+  pids_limit: null
+
+networking:
+  subdomain: "bookorbit"
+  is_web_app: true
+  requires_domain: true
+  ssl: true
+  multiple_domains: false
+  tcp_passthrough: false
+
+behavior:
+  app_slots: 1
+  expect_callback: true
+  callback_requires_auth: false
+  restart_text: null
+  can_update: true
+  update_text: "BookOrbit applies database migrations on first start after an update. This can take a few minutes on large libraries."
+  allow_downgrade: false
+  ssl_restart: false
+
+install:
+  pre_description: "Choose the username, email, and password for your BookOrbit administrator account."
+  post_description: "BookOrbit is ready. Log in with the credentials you chose, then create a library and pick a folder under /APPBOX_DATA where your books are stored."
+  custom_description: null
+
+# Web UI only, no published ports.
+ports:
+  tcp:
+    range: null
+    dynamic: 0
+  udp:
+    range: null
+    dynamic: 0
+  combined:
+    range: null
+    dynamic: 0
+
+volumes:
+  # Covers, uploads, generated secrets
+  - source: "data"
+    destination: "/data"
+    permissions: "rw"
+    uid: 1000
+  # PostgreSQL data
+  - source: "database"
+    destination: "/database"
+    permissions: "rw"
+    uid: 1000
+
+# User's Appbox home. Read-write so BookOrbit can upload, move and tag books.
+shared_data:
+  - source: "/cylostore/%CYLO.DISK_NAME%/%CYLO.ID%/home/"
+    destination: "/APPBOX_DATA"
+    permissions: "rw"
+    uid: 1000
+
+env:
+  - key: VIRTUAL_PORT
+    value: "3000"
+    template_type: none
+  # Folder picker starts here instead of /
+  - key: LIBRARY_BROWSE_ROOT
+    value: "/APPBOX_DATA"
+    template_type: none
+
+custom_fields:
+  USERNAME:
+    label: "Admin Username"
+    type: dynamicText
+    width: 6
+    default_value: "admin"
+    template_type: none
+    validate:
+      - required
+      - alphanumeric
+      - { minLength: 3 }
+      - { maxLength: 100 }
+    params: {}
+
+  EMAIL:
+    label: "Admin Email"
+    type: email
+    width: 6
+    default_value: null
+    template_type: none
+    validate:
+      - required
+      - email
+    params: {}
+
+  PASSWORD:
+    label: "Admin Password"
+    type: complexPassword
+    width: 12
+    default_value: null
+    template_type: password
+    validate:
+      - required
+      - complexPassword
+      - { minLength: 8 }
+    params: {}
+
+  LOGIN_URL:
+    label: "Login URL"
+    type: externalURL
+    width: 12
+    default_value: "https://%DOMAIN.DOMAIN%/"
+    template_type: instance
+    validate: []
+    params: {}
+
+advanced:
+  devices: []
+  ulimits: []
+  sysctls: []
+  chains: []
