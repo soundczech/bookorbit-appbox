@@ -136,19 +136,30 @@ else
 fi
 chown "${APP_USER}" /run/postgresql
 
-# Secrets BookOrbit requires. Generated once per install and stored in the
-# /data volume so they survive upgrades (changing JWT_SECRET would log everyone
-# out; changing PODCAST_ENCRYPTION_KEY would make stored podcast URLs unreadable).
+# Secrets BookOrbit needs. Generated once per install and stored in the /data volume, where they survive upgrades. Changing any of them later breaks what it protects (logins, stored podcast URLs, saved credentials).
+new_hex() {
+    node -e 'process.stdout.write(require("crypto").randomBytes(Number(process.argv[1])).toString("hex"))' "$1"
+}
+
 if [[ ! -s "${SECRETS_FILE}" ]]; then
     (
         umask 077
         {
-            echo "JWT_SECRET=$(node -e 'process.stdout.write(require("crypto").randomBytes(32).toString("hex"))')"
-            echo "PODCAST_ENCRYPTION_KEY=$(node -e 'process.stdout.write(require("crypto").randomBytes(32).toString("hex"))')"
-            echo "SETUP_BOOTSTRAP_TOKEN=$(node -e 'process.stdout.write(require("crypto").randomBytes(16).toString("hex"))')"
+            echo "JWT_SECRET=$(new_hex 32)"
+            echo "PODCAST_ENCRYPTION_KEY=$(new_hex 32)"
+            echo "SETUP_BOOTSTRAP_TOKEN=$(new_hex 16)"
+            # Encrypt saved SMTP passwords and migration source credentials.
+            # Only set on a brand new install: BookOrbit cannot read values that were saved unencrypted before one of these keys existed.
+            echo "EMAIL_ENCRYPTION_KEY=$(new_hex 32)"
+            echo "MIGRATION_ENCRYPTION_KEY=$(new_hex 32)"
         } > "${SECRETS_FILE}.tmp"
     )
     mv "${SECRETS_FILE}.tmp" "${SECRETS_FILE}"
+fi
+
+# Required before the Requests feature can save an indexer or download client.
+if ! grep -q '^BOOK_REQUEST_ENCRYPTION_KEY=' "${SECRETS_FILE}"; then
+    echo "BOOK_REQUEST_ENCRYPTION_KEY=$(new_hex 32)" >> "${SECRETS_FILE}"
 fi
 chown "${APP_USER}" "${SECRETS_FILE}"
 chmod 600 "${SECRETS_FILE}"
